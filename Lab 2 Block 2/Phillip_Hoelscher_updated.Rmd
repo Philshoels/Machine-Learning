@@ -1,0 +1,494 @@
+---
+title: "Block 2 Lab 2"
+author: "Phillip Hölscher"
+date: "17 12 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Assignment 1. Using GAM and GLM to examine the mortaily rates
+
+```{r, warning=FALSE, results='hide', message=FALSE}
+# list of all libraries
+#install.packages("readxl") # it´s an xlsx file - need the readxl package for this
+library(readxl)
+library(ggplot2)
+#install.packages("mgcv")
+library(mgcv)
+```
+
+
+```{r}
+# set working directory
+#setwd("X")
+```
+
+## 1.1
+```{r}
+data <- read_excel("Influenza.xlsx")
+```
+
+```{r}
+# time series plot
+col <- c("Mortality" = "blue", "Influenza" = "green")
+ggplot() + 
+  geom_line(aes(x = data$Time, y = data$Mortality, color = "Mortality")) +
+  geom_line(aes(x = data$Time, y = data$Influenza, color = "Influenza")) +
+  xlab("Time") +
+  ggtitle("Connection between mortality and influenza") +
+  theme_bw()
+
+```
+
+
+In this visualization are we able to see a connection between mortality and influenza. The red line, which represents influenza, as time by the time a new up-station, at the same time does mortality has an up-station. It´s possible to see both have at the same time and the same amount of up-stations. But it´s difficult to say how the amount of influenza influence the mortality. When influenza has a small kick out, does that not mean the mortality also just has a small kick out.  
+For example, around 1996 is a small kick out of influenza to recognize, but it´s the biggest kick out of mortality in the whole time series. Between 1997.5 and 2000.0 are two big kick outs for influenza for this time series, which is not connected with a high mortality kick out. 
+
+## 1.2 
+
+```{r}
+# fit GAM model
+# https://www.rdocumentation.org/packages/mgcv/versions/1.8-26/topics/gam
+
+gam_fit = gam(data$Mortality ~ data$Year +
+                s(data$Week, k=length(unique(data$Week)),
+                  bs = "cp"), # bs = "cp" ???
+              data = data,
+              family = gaussian, # gaussian is defult
+              method = "GCV.Cp") # method generalized cross-validation
+# method : The smoothing parameter estimation method
+# "GCV.Cp" to use GCV for unknown scale parameter
+# bs: B-Spline Basis for Polynomial Splines
+
+```
+
+Probabilistic model:
+$$y = Mortality$$
+$$y = N(\mu, \sigma^2) $$
+$$\hat{y} = \beta_0 + \beta_1Year_i + f(Week_i) + \epsilon_i$$
+
+## 1.3 
+```{r}
+# prediction for gam
+gam_pred <- predict(gam_fit)
+
+# plot - observed mortality vs predicted mortality
+col <- c("Observed" == "#1abc9c", "Prediction" == "#e67e22")
+ggplot() + 
+  geom_line(aes(x = data$Time, y = data$Mortality, color = "Observed")) +
+  xlab("Time") +
+  ylab("Mortality") +
+  ggtitle("observed mortality vs predicted mortality") + 
+  geom_line(aes(x = data$Time, y = gam_pred ,color = "Prediction")) + 
+  theme_bw()
+```
+
+
+Comment the quality of the fit:
+It can be seen that the course of the prediction corresponds very much to that of the obversved values. Especially the respective fluctuations upwards and downwards at the right points in time reflect the prediction well. However, the exact height or depth of the fluctuation is usually not well reflected. The prediction does not exceed 2500 in any year, but the observed values are 7 times higher. The same can be observed with the depth, which is not quite as inaccurate as the altitude, but rarely reflects the true value. 
+
+
+Investivate the output of GAM:
+```{r}
+print(gam_fit)
+summary(gam_fit)
+gam_fit$sp
+```
+
+
+- significant is the term: s(data$Week)
+
+
+Plot spline component 
+
+```{r}
+plot(gam_fit)
+```
+
+
+Interpretation:
+In this plot can we see influenza over the whole year separated in weeks of the year. 
+The highest values do we see at the beginning of the year and of the end. After week 10 we can see that influenza decreases strongly. Between week 20 and 40, the influenza is low.  After week 40 an especially after week 45 does the influenza increase strongly. 
+Which makes sense, at the cold time of the year in Europe, the beginning of the year and end of the year, does more people sicken on influenza than in the summertime.
+
+
+## 1.4 
+The influance of penalty function
+
+```{r}
+# increase lambda -> df_lambda decrease
+# higher lambda higher penilize 
+gam_smooth_low = smooth.spline(data$Time, data$Mortality, df = 25)
+gam_smooth_high = smooth.spline(data$Time, data$Mortality, df = 100)
+
+gam_smooth_low_pred = predict(gam_smooth_low)
+gam_smooth_high_pred = predict(gam_smooth_high)
+
+
+col <- c("Observed" == "#1abc9c", "Prediction high lmapda" == "#3498db" , "Prediction low lmapda" == "#34495e")
+ggplot() + 
+  geom_line(aes(x = data$Time, y = data$Mortality, color = "Observed")) +
+  xlab("Time") +
+  ylab("Mortality") +
+  ggtitle("Observed mortality vs predicted mortality") + 
+  geom_line(aes(x = data$Time, y = gam_smooth_low_pred$y ,color = "Prediction low df")) +
+  geom_line(aes(x = data$Time, y = gam_smooth_high_pred$y ,color = "Prediction high df"))
+```
+
+
+Degrees of freedom low:
+```{r}
+gam_smooth_low$lambda #2.147448e-05 
+gam_smooth_low$df #25.00381
+```
+
+Degrees of freedom high:
+```{r}
+gam_smooth_high$lambda #2.579748e-08
+gam_smooth_high$df #100.0082
+```
+
+
+In this visualization can we see the prediction with a higher lambda fit better than with a low lambda. 
+The high degree of freedom fits also good in the hights of the kick outs, the prediction with the low degree of freedom instead just follows the trend. 
+We can also see the lambda for the "low df" is bigger than the lambda for the "high df". Sinze lambda is a parameter of penalization does the prediction with a lower penalization (high df) fit the prediction better. 
+
+
+
+Estimated deviance:
+```{r}
+gam_smooth_low 
+gam_smooth_high
+
+```
+
+
+## 1.5
+```{r}
+col <- c("Observed" = "blue", "Residuals" = "red")
+ggplot() + 
+  geom_line(aes(x = data$Time, y = data$Mortality, color = "Observed")) +
+  xlab("Time") +
+  ylab("Mortality") +
+  ggtitle("Observed mortality and residuals") + 
+  geom_line(aes(x = data$Time, y = gam_fit$residuals, color = "Residuals"))
+  #geom_line(aes(x = data$Time, y = gam_smooth_low_pred$y ,color = "Prediction low lambda")) +
+  #geom_line(aes(x = data$Time, y = gam_smooth_high_pred$y ,color = "Prediction high lambda"))
+
+```
+
+Analysis:
+In this visualization are we able to observe a relationship between the mortality and the residuals of the fit. In many cases does the time of the kick out in the residuals fit with the kick out of the mortality. But with hights of the kick out does not always fit together with the kick out of the residuals, also are negative kick outs around 1998 and 2002 in the residuals to observe, which are actually positive kick-outs in the mortality.
+
+
+## 1.6
+```{r}
+
+# gam_fit = gam(data$Mortality ~ data$Year +
+#                 s(data$Week, k=length(unique(data$Week)),
+#                   bs = "cp"), 
+#               data = data,
+#               method = "GCV.Cp")
+
+# create new fitting model
+gam_fit6 = gam(data$Mortality ~ data$Influenza +
+                s(Year,k=length(unique(data$Year)), bs="gp")+
+                s(Week,k=length(unique(data$Week)), bs="cp"),
+              family = gaussian,
+              data=data,
+              method = "GCV.Cp")
+
+# create prediction
+gam_pred6 = predict(gam_fit6)
+
+# create visualization
+col <- c("Observed" == "blue", "Prediction" == "green")
+ggplot() + 
+  geom_line(aes(x = data$Time, y = data$Mortality, color = "Observed")) +
+  xlab("Time") +
+  ylab("Mortality") +
+  ggtitle("Observed mortality vs predicted mortality") + 
+  geom_line(aes(x = data$Time, y = gam_pred6 ,color = "Prediction"))
+
+```
+
+We can still see that the height and depth of the kick outs are still not optimally in line with the original values, but better than in Task 1.3. 
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+#install.packages("pamr")
+library(pamr)
+#install.packages("kernlab")
+library(kernlab)
+#install.packages("glmnet")
+library(glmnet)
+#install.packages("kernlab")
+library(kernlab)
+#install.packages("sgof")
+library(sgof)
+```
+
+# Assignment 2. High-dimensional methods
+
+```{r, results='hide'}
+# load data
+# set woring directory
+#setwd("X")
+# read data
+data = read.csv2("data.csv",
+                 fileEncoding = "ISO-8859-1")
+
+# devide data into train (70%) and test (30%) set - without scaling
+n=dim(data)[1]
+set.seed(12345)
+id=sample(1:n, floor(n*0.7)) 
+train=data[id,]
+test=data[-id,]
+
+#train
+rownames(train) = 1:nrow(train)
+x_train = t(train[,-4703]) # remove dependent variable
+y_train = train[[4703]] # vector of the dependent variable
+mydata_train = list(x = x_train,y=as.factor(y_train),geneid=as.character(1:nrow(x_train)), genenames=rownames(x_train))
+
+#test 
+rownames(test) = 1:nrow(test)
+x_test = t(test[,-4703]) 
+y_test = test[[4703]] 
+mydata_test = list(x = x_test,y=as.factor(y_test),geneid=as.character(1:nrow(x_test)), genenames=rownames(x_test))
+
+# create the model
+model = pamr.train(mydata_train,threshold=seq(0,4, 0.1))
+
+# choice threshold by cv
+cvmodel = pamr.cv(model,mydata_train)
+```
+
+Missclassification Error plot:
+
+```{r, fig.height=9}
+pamr.plotcv(cvmodel)
+```
+
+Print out of the cvmodel:
+
+```{r, fig.height=9}
+print(cvmodel)
+```
+
+In the visualization we can see that the misclassification of between the beginning and middle of 1 and 2 lies. 
+If we look at the print out we see that the threshold with the lowest error must be 1.3 or 1.4. 
+
+
+Min threshold:
+```{r}
+# the threshold for the min error of cvmodel
+best_thresbold = cvmodel$threshold[which.min(cvmodel$error)]
+best_thresbold
+```
+
+The threshold 1.3 has the lowest error of the cross validation model and is therefore used as a threshold value in the further course. 
+
+Centroid plot (threshold=1.3):
+
+
+```{r}
+pamr.plotcen(model, mydata_train, threshold=best_thresbold)
+```
+
+
+The selected features - Threshold = 1.3: 
+
+Number of features:
+```{r, results='hide', message=FALSE}
+a = pamr.listgenes(model,mydata_train,threshold=best_thresbold)
+```
+
+```{r}
+nrow(a)
+```
+
+
+List of the 10 most contributing features:
+```{r}
+#cat(paste(colnames(data)[as.numeric(a[,1])], collapse='\n'))
+top10 = as.matrix(colnames(data)[as.numeric(a[,1])][1:10])
+top10
+```
+
+```{r}
+pred_model = pamr.predict(model,
+                          newx = x_test,
+                          threshold = 1) # also for the fit threshold of 1
+cm_pred_model = table(y_test, pred_model)
+test_error_nearestshrank = (cm_pred_model[1,2] + cm_pred_model[2,1]) / sum(cm_pred_model)
+```
+
+## 2.a
+Test error & number of contributing features 
+
+```{r, message=FALSE, warning=FALSE}
+# Elastic net
+x_train = t(x_train) # transpose x_train back to normal
+x_test = t(x_test)
+
+# fit the elastic net 
+elastic_net = cv.glmnet(x = x_train,
+                        y = y_train,
+                        family = "binomial",
+                        alpha = 0.5)
+
+# create prediction
+elastic_net_pred = predict.cv.glmnet(elastic_net,
+                                     newx = x_test,
+                                     type = "class",
+                                     s="lambda.min") 
+# s penalty parameter 
+cm_elastic_net  = table(y_test, elastic_net_pred)
+test_error_elastic_net = (cm_elastic_net[1,2] + cm_elastic_net[2,1]) / sum(cm_elastic_net)
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# SVM 
+# svm() function does not support vanilladot
+# svm_fit = svm(x = x_train,
+#               y = y_train,
+#               kernel = "vanilladot")
+
+# https://www.rdocumentation.org/packages/kernlab/versions/0.9-27/topics/ksvm
+# used function - ksvm(), package
+svm_fit  = ksvm(x = x_train,
+                y = y_train,
+                kernel = "vanilladot")
+                #,scale = FALSE, # Variable(s) `' constant. Cannot scale data.
+                #type = "C-svc") # C-svc C classification
+                
+svm_fit_pred = predict(svm_fit,
+                       newdata = x_test)
+
+cm_svm = table(y_test, svm_fit_pred)
+test_error_svm = (cm_svm[1,2] + cm_svm[2,1]) / sum(cm_svm)
+```
+
+```{r}
+# comparing the results 
+# create df with the three values of the test error
+test_error_df = data.frame(
+  "Nearest shrank" = test_error_nearestshrank,
+  "Elastic net" = test_error_elastic_net,
+  "SVM" = test_error_svm
+)
+
+
+cf<-as.matrix(coef(elastic_net, elastic_net$lambda.min))
+features_nearest_shrank = nrow(a)
+features_svm_fit  = dim(data)[2] -1
+features_elasticnet = length(names(cf[cf!=0,])) 
+
+features_lengt = c(features_nearest_shrank,features_elasticnet, features_svm_fit)
+
+test_error_df = rbind(test_error_df, features_lengt )
+
+rownames(test_error_df)[1] = "Test error"
+rownames(test_error_df)[2] = "Features"
+
+
+# summary(model)
+# svm_fit
+# summary(elastic_net)
+```
+
+
+```{r}
+knitr::kable(test_error_df, caption = "Comparative Table")
+```
+
+In this table do we see the best error rate provides the model of support vector machine, as well it has the highest number of features. Since the number of features tells us something about the complexity of the model, do we not choose for support vector machine. The model of nearest shrank and elastic net does have the same value of test error, but the elastic net does just have 32 feature, do prefer this model.
+
+# 2.3 
+
+```{r, message=FALSE, results='hide'}
+# Benjamin Hochberg
+# laod the data
+data = read.csv2("data.csv",
+                 fileEncoding = "ISO-8859-1")
+# create a data frame to save p-value & name
+name_p_value = data.frame(name = character(),
+                          p_value = numeric(),
+                          stringsAsFactors = FALSE)
+# for loop to fill data frame with wanted values
+for (i in 1:4702) {
+    x <- data[,i]
+  p <- t.test( x ~ Conference,
+               data = data,
+               alternative = "two.sided" # default - don´t neet this
+               )[["p.value"]]
+  colname = colnames(data)[i]
+ name_p_value = rbind(name_p_value, data.frame(colname,p))
+}
+colnames(name_p_value) = c("name", "p_value")
+
+# -----
+# TEST
+# bla_test = BH(p_value, alpha = 0.05)
+# bla_test_class = ifelse(bla_test$Adjusted.pvalues > 0.05, "Don´t reject", "Reject")
+# which(bla_test_class == "Don´t reject")
+# ----
+# get the same results in the following calculation
+
+
+# values to use the benjamin hochberg algorithm
+alpha = 0.05
+M = ncol(data)-1
+
+# bring the p-values in order
+# copy of the original data 
+name_p_value_order = name_p_value
+name_p_value_order = name_p_value_order[order(name_p_value_order$p_value),]
+
+# calculate the prob for L
+L <- c()
+for (i in 1:M) {
+  L[i] = name_p_value_order$p_value[i] - ((alpha *i)/ M)
+}
+# include L in the data frame name_p_value_order
+name_p_value_order$L = L
+
+# save rejecteion region
+rejection_switch_vector <- which(name_p_value_order$L < 0)
+rejection_switch_max <- max(which(L < 0))
+
+reject_yes_no <- c()
+for (i in 1:length(L)) {
+  if( i <= rejection_switch_max){
+    reject_yes_no[i] = "yes"
+  } else{
+    reject_yes_no[i] = "no"
+  }
+}
+
+# add vector rejection_yes_no to data frame name_p_value_order
+name_p_value_order$rejected = reject_yes_no
+
+# create data frame just with rejected variables 
+name_p_value_order_rejected = name_p_value_order[1:rejection_switch_max,]
+```
+
+
+List of rejected features: 
+```{r}
+name_p_value_order_rejected
+```
+
+In this table are we able to see the 39 features which got rejected. This means, all the features have a clear relation to the conference text. 
+As well do we see the p-value, the calculated L-value (Benjamini Hochberg) and if the feature to rejected or not.
+
+
+\newpage
+```{r ref.label=knitr::all_labels(), echo = T, eval = F}
+```
+
