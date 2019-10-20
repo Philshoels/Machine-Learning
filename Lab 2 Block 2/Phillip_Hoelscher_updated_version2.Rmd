@@ -1,0 +1,519 @@
+---
+title: "Computer lab 2 block 2 - Version 2"
+author: "Phillip Hölscher"
+date: "29 7 2019"
+output: 
+  html_document:
+    toc: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Assignment 1. Using GAM and GLM to examine the mortaily rates
+
+```{r, echo=FALSE, warning=FALSE, results='hide', message=FALSE}
+# list of all libraries
+#install.packages("readxl") # it??s an xlsx file - need the readxl package for this
+library(readxl)
+library(ggplot2)
+#install.packages("mgcv")
+library(mgcv)
+```
+
+
+```{r}
+# set working directory
+#setwd("X")
+```
+
+## 1.1 Time seires plot
+```{r, warning=FALSE, echo=FALSE, message=FALSE}
+
+## 1.1 Time seires plot
+
+data <- read_excel("Influenza.xlsx")
+```
+
+
+```{r, echo=FALSE}
+# time series plot with dual y - axes
+ggplot(data, aes(x = data$Time)) + 
+  geom_line(aes(y = data$Influenza, color = "Influenza")) +
+  geom_line(aes(y = data$Mortality/15, color = "Mortality")) +
+  xlab("Time") + ggtitle("Mortality vs Influenza") + ylab("Influenza") + theme_bw() +
+  scale_y_continuous(sec.axis = sec_axis(~.*15, name = "Mortality"))
+```
+
+
+## 1.2 Fit GAM model
+
+```{r, echo=FALSE}
+
+## 1.2 Fit GAM model
+
+# fit GAM model
+# https://www.rdocumentation.org/packages/mgcv/versions/1.8-26/topics/gam
+```
+
+
+```{r, echo=TRUE}
+# fit GAM model
+gam_fit = gam(data$Mortality ~ data$Year +
+                s(data$Week, k=length(unique(data$Week)),
+                  bs = "cp"), # bs = "cp" ???
+              data = data,
+              family = gaussian, # gaussian is defult
+              method = "GCV.Cp") # method generalized cross-validation
+# method : The smoothing parameter estimation method
+# "GCV.Cp" to use GCV for unknown scale parameter
+# bs: B-Spline Basis for Polynomial Splines
+
+```
+
+Probabilistic model:
+$$y = Mortality$$
+$$y = N(\mu, \sigma^2) $$
+$$\hat{y} = \beta_0 + \beta_1Year_i + f(Week_i) + \epsilon_i$$
+
+## 1.3 Predicted vs observed mortality + fit GAM model
+```{r, echo=FALSE}
+
+## 1.3 Predicted vs observed mortality + fit GAM model
+
+# prediction for gam
+gam_pred <- predict(gam_fit)
+
+# plot - observed mortality vs predicted mortality
+#col <- c("Observed" == "#1abc9c", "Prediction" == "#e67e22")
+ggplot(data, aes(x = data$Time)) + 
+  geom_line(aes(y = data$Mortality, color = "Observed")) +
+  xlab("Time") + ylab("Mortality") + ggtitle("Observed mortality vs predicted mortality") + 
+  geom_line(aes(y = gam_pred ,color = "Prediction")) + 
+  theme_bw()
+```
+
+
+GAM model:
+```{r}
+print(gam_fit)
+summary(gam_fit)
+gam_fit$sp
+```
+
+
+Spline component 
+
+```{r, echo=FALSE}
+plot(gam_fit)
+```
+
+
+## 1.4 Penalty function
+
+```{r}
+
+## 1.4 Penalty function
+
+# The influance of penalty function
+# increase lambda -> df_lambda decrease
+# higher lambda higher penilize 
+gam_smooth_low = smooth.spline(data$Time, data$Mortality, df = 25)
+gam_smooth_high = smooth.spline(data$Time, data$Mortality, df = 100)
+
+gam_smooth_low_pred = predict(gam_smooth_low)
+gam_smooth_high_pred = predict(gam_smooth_high)
+```
+
+
+```{r, echo=FALSE}
+ggplot() + 
+  geom_line(aes(x = data$Time, y = data$Mortality, color = "Observed")) +
+  xlab("Time") +
+  ylab("Mortality") +
+  ggtitle("Observed mortality vs predicted mortality") + 
+  geom_line(aes(x = data$Time, y = gam_smooth_low_pred$y ,color = "Prediction low df")) +
+  geom_line(aes(x = data$Time, y = gam_smooth_high_pred$y ,color = "Prediction high df"))
+
+```
+
+
+Degrees of freedom low:
+```{r}
+gam_smooth_low$lambda #2.147448e-05 
+gam_smooth_low$df #25.00381
+```
+
+Degrees of freedom high:
+```{r}
+gam_smooth_high$lambda #2.579748e-08
+gam_smooth_high$df #100.0082
+```
+
+
+
+Estimated deviance:
+```{r}
+gam_smooth_low 
+gam_smooth_high
+```
+
+
+## 1.5 Plot residuals vs influenza
+```{r, echo=FALSE}
+
+## 1.5 Plot residuals vs influenza
+
+col <- c("Observed" = "blue", "Residuals" = "red")
+ggplot(data, aes(x = data$Time)) + 
+  geom_line(aes(y = data$Mortality/5, color = "Observed")) +
+  geom_line(aes(y = gam_fit$residuals, color = "Residuals")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*5, name = "Observed")) +
+  xlab("Time") + ylab("Residuals") + ggtitle("Observed mortality and residuals") 
+
+  #geom_line(aes(x = data$Time, y = gam_smooth_low_pred$y ,color = "Prediction low lambda")) +
+  #geom_line(aes(x = data$Time, y = gam_smooth_high_pred$y ,color = "Prediction high lambda"))
+
+```
+
+## 1.6 Fit GAM model mortality is be modelled as an additive function
+```{r}
+
+# ## 1.6 Fit GAM model mortality is be modelled as an additive function
+
+# gam_fit = gam(data$Mortality ~ data$Year +
+#                 s(data$Week, k=length(unique(data$Week)),
+#                   bs = "cp"), 
+#               data = data,
+#               method = "GCV.Cp")
+
+# create new fitting model
+gam_fit6 = gam(data$Mortality ~ data$Influenza +
+                s(Year,k=length(unique(data$Year)), bs="gp")+
+                s(Week,k=length(unique(data$Week)), bs="cp"),
+              family = gaussian,
+              data=data,
+              method = "GCV.Cp")
+
+# create prediction
+gam_pred6 = predict(gam_fit6)
+
+```
+
+```{r, echo=FALSE}
+# create visualization
+col <- c("Observed" == "blue", "Prediction" == "green")
+ggplot() + 
+  geom_line(aes(x = data$Time, y = data$Mortality, color = "Observed")) +
+  xlab("Time") +
+  ylab("Mortality") +
+  ggtitle("Observed mortality vs predicted mortality") + 
+  geom_line(aes(x = data$Time, y = gam_pred6 ,color = "Prediction"))
+```
+
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+#install.packages("pamr")
+library(pamr)
+#install.packages("kernlab")
+library(kernlab)
+#install.packages("glmnet")
+library(glmnet)
+#install.packages("kernlab")
+library(kernlab)
+#install.packages("sgof")
+library(sgof)
+```
+
+# Assignment 2. High-dimensional methods
+```{r, echo=FALSE, warning=FALSE, results='hide'}
+# clean environment
+rm(list = ls())
+```
+
+## 2.1 Nearest shrunken centriod classification
+
+```{r, echo=FALSE}
+
+## 2.1 Nearest shrunken centriod classification
+
+# read data
+# data = read.csv2("data.csv",
+#                  fileEncoding = "ISO-8859-1")
+data = read.csv2("data.csv")
+```
+
+
+```{r, echo=FALSE, results='hide'}
+# devide data into train (70%) and test (30%) set - without scaling
+n=dim(data)[1]
+set.seed(12345)
+id=sample(1:n, floor(n*0.7)) 
+train=data[id,]
+test=data[-id,]
+```
+
+```{r}
+#train
+rownames(train) = 1:nrow(train)
+x_train = t(train[,-4703]) # remove dependent variable
+y_train = train[[4703]] # vector of the dependent variable
+mydata_train = list(x = x_train,y=as.factor(y_train),geneid=as.character(1:nrow(x_train)), genenames=rownames(x_train))
+
+#test 
+rownames(test) = 1:nrow(test)
+x_test = t(test[,-4703]) 
+y_test = test[[4703]] 
+mydata_test = list(x = x_test,y=as.factor(y_test),
+                   geneid = as.character(1:nrow(x_test)), 
+                   genenames = rownames(x_test))
+
+# create the model
+model = pamr.train(mydata_train,threshold=seq(0,4, 0.1))
+
+# choice threshold by cv
+cvmodel = pamr.cv(model,mydata_train)
+```
+
+
+Missclassification Error plot:
+
+```{r, fig.height=9, echo=FALSE}
+# settings {r, fig.height=9}
+# Missclassification Error plot:
+pamr.plotcv(cvmodel)
+```
+
+
+```{r, fig.height=9, echo=FALSE}
+# Print out of the cvmodel:
+print(cvmodel)
+```
+
+
+
+```{r}
+# Min threshold:
+# the threshold for the min error of cvmodel
+best_thresbold = cvmodel$threshold[which.min(cvmodel$error)]
+best_thresbold
+```
+
+
+
+```{r}
+pamr.plotcen(model, mydata_train, threshold=best_thresbold)
+```
+
+
+The selected features - Threshold = 1.3: 
+
+
+```{r, results='hide', message=FALSE}
+# Number of features:
+a = pamr.listgenes(model,mydata_train,threshold=best_thresbold)
+```
+
+```{r}
+nrow(a)
+```
+
+
+
+```{r}
+# List of the 10 most contributing features:
+
+#cat(paste(colnames(data)[as.numeric(a[,1])], collapse='\n'))
+top10 = as.matrix(colnames(data)[as.numeric(a[,1])][1:10])
+top10
+```
+
+```{r}
+# test error nearest shrunk
+pred_model = pamr.predict(model,
+                          newx = x_test,
+                          threshold = 1) # also for the fit threshold of 1
+cm_pred_model = table(y_test, pred_model)
+test_error_nearestshrank = (cm_pred_model[1,2] + cm_pred_model[2,1]) / sum(cm_pred_model)
+```
+
+## 2.2 Test error & number of the contributing features
+
+### 2.a Elasitc net
+
+```{r, message=FALSE, warning=FALSE}
+
+## 2.2 Test error & number of the contributing features
+
+### 2.a Elasitc net
+
+x_train = t(x_train) # transpose x_train back to normal
+x_test = t(x_test)
+
+# fit the elastic net 
+elastic_net = cv.glmnet(x = x_train,
+                        y = y_train,
+                        family = "binomial",
+                        alpha = 0.5)
+
+# create prediction
+elastic_net_pred = predict.cv.glmnet(elastic_net,
+                                     newx = x_test,
+                                     type = "class",
+                                     s="lambda.min") 
+# s penalty parameter 
+cm_elastic_net  = table(y_test, elastic_net_pred)
+test_error_elastic_net = (cm_elastic_net[1,2] + cm_elastic_net[2,1]) / sum(cm_elastic_net)
+
+```
+
+### 2.b Support vector machine
+
+```{r, echo=FALSE}
+# SVM 
+# svm() function does not support vanilladot
+# svm_fit = svm(x = x_train,
+#               y = y_train,
+#               kernel = "vanilladot")
+
+# https://www.rdocumentation.org/packages/kernlab/versions/0.9-27/topics/ksvm
+# used function - ksvm(), package
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# SVM 
+# used function - ksvm(), package
+svm_fit  = ksvm(x = x_train,
+                y = y_train,
+                kernel = "vanilladot")
+                #,scale = FALSE, # Variable(s) `' constant. Cannot scale data.
+                #type = "C-svc") # C-svc C classification
+                
+svm_fit_pred = predict(svm_fit,
+                       newdata = x_test)
+
+cm_svm = table(y_test, svm_fit_pred)
+test_error_svm = (cm_svm[1,2] + cm_svm[2,1]) / sum(cm_svm)
+```
+
+```{r, echo=FALSE}
+# comparing the results 
+# create df with the three values of the test error
+test_error_df = data.frame(
+  "Nearest shrank" = test_error_nearestshrank,
+  "Elastic net" = test_error_elastic_net,
+  "SVM" = test_error_svm
+)
+
+
+cf<-as.matrix(coef(elastic_net, elastic_net$lambda.min))
+features_nearest_shrank = nrow(a)
+features_svm_fit  = dim(data)[2] -1
+features_elasticnet = length(names(cf[cf!=0,])) 
+
+features_lengt = c(features_nearest_shrank,features_elasticnet, features_svm_fit)
+
+test_error_df = rbind(test_error_df, features_lengt )
+
+rownames(test_error_df)[1] = "Test error"
+rownames(test_error_df)[2] = "Features"
+
+
+# summary(model)
+# svm_fit
+# summary(elastic_net)
+```
+
+
+```{r, echo=FALSE}
+knitr::kable(test_error_df, caption = "Comparative Table")
+```
+
+
+# 2.3 Benjamin-Hochberg method
+
+```{r, message=FALSE, results='hide', echo=TRUE}
+# Benjamin Hochberg
+# laod the data
+
+# data = read.csv2("data.csv",
+#                  fileEncoding = "ISO-8859-1")
+
+data = read.csv2("data.csv")
+# create a data frame to save p-value & name
+name_p_value = data.frame(name = character(),
+                          p_value = numeric(),
+                          stringsAsFactors = FALSE)
+# for loop to fill data frame with wanted values
+for (i in 1:4702) {
+    x <- data[,i]
+  p <- t.test( x ~ Conference,
+               data = data,
+               alternative = "two.sided" # default - don??t neet this
+               )[["p.value"]]
+  colname = colnames(data)[i]
+ name_p_value = rbind(name_p_value, data.frame(colname,p))
+}
+colnames(name_p_value) = c("name", "p_value")
+
+# -----
+# TEST
+# bla_test = BH(p_value, alpha = 0.05)
+# bla_test_class = ifelse(bla_test$Adjusted.pvalues > 0.05, "Don??t reject", "Reject")
+# which(bla_test_class == "Don??t reject")
+# ----
+# get the same results in the following calculation
+
+
+# values to use the benjamin hochberg algorithm
+alpha = 0.05
+M = ncol(data)-1
+
+# bring the p-values in order
+# copy of the original data 
+name_p_value_order = name_p_value
+name_p_value_order = name_p_value_order[order(name_p_value_order$p_value),]
+
+# calculate the prob for L
+L <- c()
+for (i in 1:M) {
+  L[i] = name_p_value_order$p_value[i] - ((alpha *i)/ M)
+}
+# include L in the data frame name_p_value_order
+name_p_value_order$L = L
+
+# save rejecteion region
+rejection_switch_vector <- which(name_p_value_order$L < 0)
+rejection_switch_max <- max(which(L < 0))
+
+reject_yes_no <- c()
+for (i in 1:length(L)) {
+  if( i <= rejection_switch_max){
+    reject_yes_no[i] = "yes"
+  } else{
+    reject_yes_no[i] = "no"
+  }
+}
+
+# add vector rejection_yes_no to data frame name_p_value_order
+name_p_value_order$rejected = reject_yes_no
+
+# create data frame just with rejected variables 
+name_p_value_order_rejected = name_p_value_order[1:rejection_switch_max,]
+```
+
+
+List of rejected features: 
+```{r, echo=FALSE}
+name_p_value_order_rejected
+```
+
+In this table are we able to see the 39 features which got rejected. This means, all the features have a clear relation to the conference text. 
+As well do we see the p-value, the calculated L-value (Benjamini Hochberg) and if the feature to rejected or not.
+
+\newpage
+```{r ref.label=knitr::all_labels(), echo = T, eval = F}
+```
+

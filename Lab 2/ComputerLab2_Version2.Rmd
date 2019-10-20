@@ -1,0 +1,925 @@
+---
+title: "Computer lab 2 - Version 2"
+author: "Phillip H??lscher"
+date: "17 6 2019"
+output: 
+  html_document: 
+    toc: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, results='hide', message=FALSE}
+#packages needed for the lab
+#### library #### ---- 
+library(ggplot2)
+library(MASS)
+library(e1071)
+library(caret)
+library(readxl)
+library(tree)
+library(boot)
+library(gdata)
+library(SDMTools)
+library(fastICA)
+```
+
+# Assignemnt 1
+## LDA and logistic regression
+```{r, echo=FALSE}
+rm(list = ls())
+```
+
+
+### 1.1 Scatterplot
+
+```{r, echo=FALSE}
+### 1.1 Scatterplot
+#load the data 
+data = read.csv("australian-crabs.csv")
+
+ggplot(data) + 
+  geom_point(aes(x = CL, y = RW, color = sex)) +
+  xlab("carapace length") + ylab("rear width") + ggtitle("CL vs RW")
+```
+
+### 1.2 LDA analysis
+```{r}
+### 1.2 LDA analysis
+lda_analysis = function(data, target, feature1, feature2, ...){
+  # input:
+  # feature: needs to be a vector input of CL and RW
+  # Model Discriminant Analysis
+  lda_model = lda(target ~ feature1 + feature2,
+                data = data,
+                prior = ...)
+
+  # make prediction for sex
+  predict_sex = predict(lda_model,
+                      data = data)
+  
+  # Results - Confusion Matrix
+  t = table(predict_sex$class, data$sex)
+  cm = confusionMatrix(t)
+  cm$table
+  
+  misclassification = round(1-sum(diag(t))/sum(t),3)
+  
+  result = list("model" = lda_model,
+                "pred" = predict_sex,
+                "confusion_matrix" = cm,
+                "confusion_matrix_table" = t,
+                "misclassification" = misclassification)
+  return(result)
+  
+}
+```
+
+
+```{r,echo=FALSE}
+# Model Discriminant Analysis
+lda = lda_analysis(data, data$sex , data$CL, data$RW)
+lda_model = lda$model
+
+# make prediction for sex
+predict_sex = lda$pred
+```
+
+Scatter plot 
+```{r, echo=FALSE}
+# create plto data
+data_class = cbind(data,"pred_sex" = predict_sex$class)
+
+# plot of pred sex
+ggplot(data_class) + 
+  geom_point(aes(x = CL, y = RW, color = pred_sex)) +
+  xlab("carapace length") + ylab("rear width") + ggtitle("Predicted sex - LDA")
+```
+
+Confusion Matrix of prediction
+```{r, echo=FALSE}
+# Results - Confusion Matrix
+lda$confusion_matrix_table
+```
+Misclassification rate
+```{r, echo=FALSE}
+lda$misclassification
+```
+
+```{r, echo=FALSE, eval=FALSE}
+# different way
+lda2_model2 = lda(sex ~ CL + RW, data=data, CV=TRUE)
+pred_female_data = data[lda2_model2$posterior[,1] > lda2_model2$posterior[,2],]
+pred_male_data = data[lda2_model2$posterior[,2] > lda2_model2$posterior[,1],]
+```
+
+### 1.3 LDA analysis with prior
+```{r }
+### 1.3 LDA analysis with prior
+prior_male_female = c(0.9,0.1)
+lda_model_prior = lda_analysis(data, data$sex , data$CL, data$RW, prior = prior_male_female)
+```
+
+Confusioin matrix 
+```{r, echo=FALSE}
+lda_model_prior$confusion_matrix_table
+```
+
+
+Misclassification rate
+```{r, echo=FALSE}
+lda_model_prior$misclassification
+```
+
+
+### 1.4 Classification by logistic regression
+```{r, warning=FALSE}
+### 1.4 Classification by logistic regression
+# fit logistic regression
+logreg_fit = glm(sex ~ CL + RW,
+                 data = data,
+                 family = "binomial")
+# make prediction
+pred = predict(object = logreg_fit,
+               data = data,
+               type = "response")
+
+# if probability >= 0.5 than male else femail
+pred_sex_logreg = ifelse(pred >= 0.5, "male", "female")
+```
+
+```{r, echo=FALSE}
+data_logistic = cbind(data, pred_sex_logreg)
+
+# plot of pred sex
+plot1.4 = ggplot(data_logistic) + 
+  geom_point(aes(x = CL, y = RW, color = pred_sex_logreg)) +
+  xlab("carapace length") + ylab("rear width") + ggtitle("Predicted sex - Logistic regression")
+plot1.4
+```
+
+
+Misclassification rate
+```{r, echo=FALSE}
+cm_logreg = table(pred_sex_logreg, data$sex)
+round(1-sum(diag(cm_logreg))/sum(cm_logreg),3)
+```
+
+```{r}
+# compute sople and intercept for decision boundary
+slope = coef(logreg_fit)[2]/(-coef(logreg_fit)[3])
+intercept = coef(logreg_fit)[1]/(-coef(logreg_fit)[3])
+```
+
+```{r, echo=FALSE}
+# plot of exercise 1.4 with decision boundary
+plot1.4 + geom_abline(aes(slope = slope,
+                      intercept = intercept,
+                      color = "decision boundary")) +
+  ggtitle("Decision boundary - Predicted sex - Logistic regression")
+```
+
+# Assignemnt 2
+## Analysis of credit scoring
+```{r, echo=FALSE, warning=FALSE, results='hide'}
+rm(list = ls())
+```
+
+
+### 2.1 Training, validation & test set
+```{r, warning=FALSE}
+### 2.1 Training, validation & test set
+# load data
+data = read.xls("creditscoring.xls")
+
+# split the data into training, validation & test set 
+#train
+n=dim(data)[1]
+set.seed(12345)
+id=sample(1:n, floor(n*0.5))
+train=data[id,]
+# validation
+id1=setdiff(1:n, id)
+set.seed(12345)
+id2=sample(id1, floor(n*0.25))
+valid=data[id2,]
+# test
+id3=setdiff(id1,id2)
+test=data[id3,]
+```
+
+
+### 2.2 Decision tree
+```{r}
+### 2.2 Decision tree
+# function to calcualte the misclassification rate
+misclassificatoin_rate = function(confusion_matrix){
+  return(1-(sum(diag(confusion_matrix))/ sum(confusion_matrix)))
+}
+
+tree_classifier = function(target, train_data, split, pred_data){
+  # input:
+  # ... = "deviance" or "gini"
+  # fit the tree
+  tree_fit = tree(as.factor(target) ~.,
+                           data = train_data,
+                           split = split)
+  
+  # make prediction
+  tree_pred = predict(tree_fit,
+                      newdata = pred_data, 
+                      type = "class")
+
+  # confusion matrix to calcualte the misclassifcation rate
+  cm = table(tree_pred, true_data)
+  
+  # misclassification rate 
+  mis_class_rate = misclassificatoin_rate(cm)
+  
+  # results of the function
+  result = list("tree_fit" = tree_fit,
+                "tree_pred" = tree_pred,
+                "confusion_matrix" = cm,
+                "misclassification_rate" = mis_class_rate)
+  
+  return(result)
+}
+```
+
+
+
+```{r, warning=FALSE}
+# fit the model
+classifier_tree_dev = tree(as.factor(good_bad) ~.,
+                           data = train,
+                           split = "deviance")
+
+classifier_tree_gi = tree(as.factor(good_bad) ~.,
+                           data = train,
+                           split = "gini")
+```
+
+
+Misclassification
+
+- Train
+```{r, echo=FALSE}
+# with summary do we have access to the misclassificationrate
+# misclass error rate - TRAIN
+mcer_classifier_tree_dev = summary(classifier_tree_dev)
+mcer_classifier_tree_dev = round(mcer_classifier_tree_dev$misclass[1]/
+  mcer_classifier_tree_dev$misclass[2],2)
+
+mcer_classifier_tree_gi = summary(classifier_tree_gi)
+mcer_classifier_tree_gi = round(mcer_classifier_tree_gi$misclass[1]/
+  mcer_classifier_tree_gi$misclass[2],2)
+```
+
+```{r,echo=FALSE}
+cat("Misclassification for deviance in train set:\n", mcer_classifier_tree_dev)
+cat("\nMisclassification for gini in train set:\n", mcer_classifier_tree_gi)
+```
+
+- Test
+
+```{r, echo=FALSE, warning=FALSE}
+# make predictions of trees
+tree_dev_pred = predict(classifier_tree_dev, 
+                        newdata = test, 
+                        type = "class")
+
+tree_gi_pred = predict(classifier_tree_gi, 
+                        newdata = test, 
+                        type = "class")
+
+# confusion matrix to calcualte the misclassifcation rate
+cm_train_dev = table(tree_dev_pred, test$good_bad)
+cm_train_gi = table(tree_gi_pred, test$good_bad)
+
+# function to calcualte the misclassification rate
+misclassificatoin_rate = function(confusion_matrix){
+  return(1-(sum(diag(confusion_matrix))/ sum(confusion_matrix)))
+}
+
+mis_class_dev = round(misclassificatoin_rate(cm_train_dev),2)
+mis_clas_gi =  round(misclassificatoin_rate(cm_train_gi),2)
+
+cat("Misclassification for deviance in test set:\n", mis_class_dev)
+cat("\n Misclassification for gini in test set:\n", mis_clas_gi)
+```
+
+
+### 2.3 Optimal tree depth
+```{r}
+### 2.3 Optimal tree depth
+#fit=tree(class~., data=train)
+# deviance better tree - from here one work with deviance
+classifier_tree_dev2 = tree(good_bad~. ,
+                           data = train, 
+                           split = "deviance")
+
+trainScore=rep(0,15)
+testScore=rep(0,15)
+
+# test which depth woud be the best for the tree model
+for(i in 2:15) { 
+  prunedTree = prune.tree(classifier_tree_dev2, best = i) 
+  pred = predict(prunedTree, newdata = valid, type = "tree") 
+  trainScore[i] = deviance(prunedTree) 
+  testScore[i] = deviance(pred)
+}
+```
+
+```{r, echo=FALSE}
+# plot of train and validation deviance to find the best number of trees
+# which is the lowest deviance of the validation
+
+best_leaf = which.min(testScore[2:15])
+best_dev = testScore[2:15][best_leaf]
+
+col = c("Train" = "red", "Validation" = "blue")
+ggplot() + 
+  geom_line(aes(2:15,trainScore[2:15], color = "Train")) +
+  geom_point(aes(2:15,trainScore[2:15], color = "Train")) + 
+  geom_line(aes(2:15,testScore[2:15], color = "Validation")) + 
+  geom_point(aes(2:15,testScore[2:15], color = "Validation")) +
+  ylab("Deviance") + xlab("Number of leaves") + ggtitle("Optimal tree depth") +
+  geom_point(aes(x = best_leaf + 1, y = best_dev, color = "best leaf")) 
+# +1 because we start in the Score vector with 2
+
+# the deviance is at leave the lowest 
+# best tree depth is 4
+```
+
+Optimal tree
+```{r}
+# create the optimal tree
+finalTree_2.3 = prune.tree(classifier_tree_dev2,
+                            best = 4)
+# report the tree
+plot(finalTree_2.3)
+text(finalTree_2.3, pretty=0)
+```
+
+Variable used
+```{r, echo=FALSE}
+# variable used
+finalTree_2.3_varused = summary(finalTree_2.3)
+finalTree_2.3_varused = finalTree_2.3_varused$used
+finalTree_2.3_varused
+```
+
+Misclassification rate optimal tree - test data
+```{r, echo=FALSE}
+# misclassifcation - TEST data
+pred_finalTree = predict(finalTree_2.3,
+                          newdata = test,
+                          type = "class")
+cm_finalTree = table(test$good_bad, pred_finalTree)
+mcr_finalTree = (cm_finalTree[1,2] + cm_finalTree[2,1]) / sum(cm_finalTree)
+# 0.256
+round(mcr_finalTree,2)
+```
+
+### 2.4 Naive Bayes classifier 
+```{r}
+### 2.4 Naive Bayes classifier 
+# classifier for naive bayes on train data
+classifier_nb = naiveBayes(formula = good_bad~., 
+                            data = train)
+# prediction of train data
+pred_nb_train = predict(classifier_nb,
+                         newdata = train[-20])
+
+# prediction of test data
+pred_nb = predict(classifier_nb, 
+                   newdata = test[-20])
+```
+
+Confusion matrix
+
+- Train 
+```{r, echo=FALSE}
+# confusion matrix train data
+cm_nb_train = table(train$good_bad, pred_nb_train)
+cm_nb_train
+```
+
+- Test
+```{r,echo=FALSE}
+# confusion matrix test data
+cm_nb = table(test$good_bad, pred_nb)
+cm_nb
+```
+
+
+Misclassification rate
+
+- Train
+```{r, echo=FALSE}
+# misclassification rate - train
+mcr_nb_train = (cm_nb_train[1,2] + cm_nb_train[2,1])/ sum(cm_nb_train)
+mcr_nb_train
+```
+
+
+```{r, echo=FALSE}
+# misclassification rate
+mcr_nb = (cm_nb[1,2] + cm_nb[2,1])/ sum(cm_nb)
+mcr_nb
+```
+
+
+
+### 2.5 ROC curve
+```{r}
+### 2.5 ROC curve
+# create the pi vector 
+pi_inc = seq(from = 0.05, 
+              to = 0.95,
+              by = 0.05)
+
+# optimal tree - classify TEST data
+# create prediction
+pred_finalTree_prob = predict(finalTree_2.3,
+                               newdata = test)
+
+#pred_finalTree_prob[,2] # prob of 'good' classifications
+pred_finalTree_prob_good = pred_finalTree_prob[,2]
+
+# transfare "good" = 1 and "bad" = 0
+test_gb_numb = test
+test_gb_numb$good_bad = ifelse(test_gb_numb$good_bad == "good", 1, 0)
+
+# cm optimal tree pred - TEST data
+
+# create empty matrix for TPR & FPR values
+tpr_fpr_ot = matrix(ncol = 2, nrow = length(pi_inc))
+colnames(tpr_fpr_ot) = c("TPR", "FPR")
+
+for (i in 1:length(pi_inc)) {
+  test_ot = ifelse(pred_finalTree_prob_good > pi_inc[i], 1, 0)
+  cm_test = confusion.matrix(test_ot, test_gb_numb$good_bad)
+  
+  tpr = cm_test[2,2]/(cm_test[2,1] + cm_test[2,2])
+  fpr = cm_test[1,2]/(cm_test[1,1] + cm_test[1,2])
+  
+  tpr_fpr_ot[i,] = c(tpr,fpr)
+}
+
+# naive bayes to classify TEST data
+
+# classifier for naive bayes on train data
+classifier_nb2 = naiveBayes(good_bad~.,
+                             data = train)
+
+# prediction of test data
+pred_nb_prob = predict(classifier_nb2, 
+                   newdata = test, 
+                   type = "raw") # type raw - creates a probability prediction
+
+#pred_nb_prob[,2] # prob of 'good' classifications
+pred_nb_prob = pred_nb_prob[,2]
+
+# create empty matrix for TPR & FPR values
+tpr_fpr_nb = matrix(ncol = 2, nrow = length(pi_inc))
+colnames(tpr_fpr_nb) = c("TPR", "FPR")
+
+for (i in 1:length(pi_inc)) {
+  test_nb = ifelse(pred_nb_prob > pi_inc[i], 1, 0)
+  cm_test = confusion.matrix(test_nb, test_gb_numb$good_bad)
+  
+  tpr = cm_test[2,2]/(cm_test[2,1] + cm_test[2,2])
+  fpr = cm_test[1,2]/(cm_test[1,1] + cm_test[1,2])
+  
+  tpr_fpr_nb[i,] = c(tpr,fpr)
+}
+```
+
+
+```{r, echo=FALSE}
+# plot ROC (Receiver operating characteristics)
+
+col = c("Optimal Tree" = "red", "Naive Bayes" = "blue")
+
+# ROC Optimal Tree & Naive Bayes
+roc_op_nb_plot = ggplot() + 
+  geom_line(aes(x = tpr_fpr_ot[,2], y = tpr_fpr_ot[,1], col = "Optimal Tree")) + 
+  geom_point(aes(x = tpr_fpr_ot[,2], y = tpr_fpr_ot[,1], col = "Optimal Tree")) +
+  geom_line(aes(x = tpr_fpr_nb[,2], y = tpr_fpr_nb[,1], col = "Naive Bayes")) + 
+  geom_point(aes(x = tpr_fpr_nb[,2], y = tpr_fpr_nb[,1], col = "Naive Bayes")) + 
+  xlab("fpr") + 
+  ylab("tpr") +
+  ggtitle("ROC curve - Optimal Tree & Naive Bayes")
+roc_op_nb_plot
+```
+
+
+### 2.6 Naive Bayes with loss matrix
+```{r, eval=TRUE}
+# Version 1
+### 2.6 Naive Bayes with loss matrix
+# use the classifier from 2.4 & pred probabilities
+set.seed(12345)
+
+# classifier for naive bayes on train data
+classifier_nb = naiveBayes(formula = good_bad~., 
+                            data = train)
+# prediction of train data
+pred_nb_train_prob = predict(classifier_nb,
+                         newdata = train[-20],
+                         type = "raw") # creates  the probabilites
+
+# create L_Observed
+l_observed = matrix(c(0,1,10,0), nrow = 2, byrow = TRUE)
+l_observed
+
+# crate a classification - TRAIN data - implement loss function
+pred_nb_train_prob_loss = ifelse(l_observed[1,2] * pred_nb_train_prob[,1] > 
+                                   l_observed[2,1] * pred_nb_train_prob[,2],1,0)
+
+# confusion matrix - TRAIN data
+cm_nb_loss_train = table(ifelse(train$good_bad == "good",1,0), pred_nb_train_prob_loss)
+
+# prediction of test data
+pred_nb_test_prob = predict(classifier_nb,
+                              newdata = test[-20],
+                              type = "raw")
+
+# crate a classification - TEST data - implement loss function
+pred_nb_test_prob_loss = ifelse(l_observed[1,2] * pred_nb_test_prob[,1] > 
+                                  l_observed[2,1] * pred_nb_test_prob[,2],1,0)
+
+# # confusion matrix - TRAIN data
+cm_nb_loss_test = table(ifelse(test$good_bad == "good",1,0), pred_nb_test_prob_loss)
+```
+
+
+
+Confusion Matrix
+
+- Train:
+```{r, echo=FALSE}
+cm_nb_loss_train
+```
+
+- Test:
+```{r, echo=FALSE}
+cm_nb_loss_test
+```
+
+
+```{r, echo=FALSE, eval=FALSE}
+# version 2
+set.seed(12345)
+bayes.predict <- predict(classifier_nb2, newdata = test, type = "raw")
+bayes.predict.train <- predict(classifier_nb2, newdata = train, type = "raw")
+loss_matrix <- matrix(data = c(0,1,10,0), nrow = 2, ncol = 2)
+
+bayes.loss.predict <- ifelse(bayes.predict[,2]/bayes.predict[,1] > loss_matrix[3]/loss_matrix[2], "good", "bad")
+bayes.loss.predict.train <- ifelse(bayes.predict.train[,2]/bayes.predict.train[,1] > loss_matrix[3]/loss_matrix[2], "good", "bad")
+table(actual = test$good_bad, predict = bayes.loss.predict)
+```
+
+
+
+# Assignment 3
+## Uncertainty estimation
+```{r, echo=FALSE}
+rm(list = ls())
+```
+
+
+### 3.1 Reorder data plot EX vs MET
+```{r, echo=FALSE}
+### 3.1 Reorder data plot EX vs MET
+
+# 3.1 ---- 
+# read the data
+data3 = read.csv2("State.csv")
+
+# order MET increasing
+data3 = data3[order(data3$MET),]
+```
+
+```{r, echo=FALSE}
+# plot EX versus MET
+plot31 = ggplot(data = data3) + 
+  geom_point(aes(x = data3$MET, y = data3$EX, color = "Data points")) + 
+  xlab("MET") + ylab("EX") + ggtitle("EX versus MET")
+plot31
+```
+
+### 3.2 Fit tree regression
+```{r}
+### 3.2 Fit tree regression
+# fit regression tree
+regressor_tree = tree(data3$EX ~ data3$MET, 
+                       data = data3,
+                       control = tree.control(nobs = nrow(data3), minsize = 8))
+# number of leaves 
+set.seed(12345)
+regressor_tree_cv = cv.tree(regressor_tree,  FUN  = prune.tree)
+```
+
+```{r, echo=FALSE}
+optimal_tree_nr = ggplot() +
+  geom_line(aes(x = regressor_tree_cv$size, y = regressor_tree_cv$dev), color = "red") +
+  geom_point(aes(x = regressor_tree_cv$size, y = regressor_tree_cv$dev), color = "red") +
+  xlab("Number of leaves") +
+  ylab("Deviance") + 
+  ggtitle("Optimal number of leaves")
+
+# we see from this plot the optimal number of leaves is 3
+optimal_tree_nr
+```
+
+
+The optimal tree:
+```{r}
+# report the selected tree
+# fit the best tree
+regressor_tree_best = prune.tree(tree = regressor_tree,
+                                  best = 3)
+
+```
+
+```{r, echo=FALSE}
+# report the selected tree
+plot(regressor_tree_best)
+text(regressor_tree_best, pretty=0)
+title("Optimal tree")
+#regressor_tree_best
+# summary(regressor_tree_best)
+#regressor_tree_best_pred <- predict(regressor_tree_best, newdata = data3)
+```
+
+
+Plot of original and the fitted data
+```{r, echo=FALSE}
+# plot - original data and fitted data
+
+col = c("Original Data" = "blue", "Predicted data" = "red")
+plot32 = plot31 +
+  geom_line(aes(x = data3$MET, y = predict(regressor_tree_best), color = "Predicted data"))
+plot32
+```
+
+```{r, echo=FALSE}
+# hist_of_reso = ggplot() + 
+#   geom_histogram(aes(x = resid(regressor_tree_best))) +
+#   ggtitle("Histogram of residuals")+ 
+#   xlab("residuals")
+# hist_of_reso
+
+```
+
+Histogram - Residuals of the fit
+```{r, warning=FALSE, echo=FALSE}
+# Generate histogram of Residuals
+summary_tree_best = summary(regressor_tree_best)
+hist(summary_tree_best$residuals, xlab="Residuals", 
+     main="Freq vs. Res", breaks=20,xlim=c(-100,150))
+```
+
+### 3.3 95% confidence bands - non-parametric bootstrap
+for the regression tree model
+
+```{r, warning=FALSE}
+### 3.3 95% confidence bands - non-parametric bootstrap
+# Function from lectures, replaced with tree
+f1 = function(in.data, ind) {
+  data1 = in.data[ind,] # Extract bootstrap sample
+  fittedTree = tree(EX ~ MET, 
+                    data = data1, 
+                    control = tree.control(nobs=nrow(data1), minsize = 8))
+  
+  pruneTree = prune.tree(fittedTree, best = 3)
+  predData = predict(pruneTree, newdata = in.data)
+  return(predData)
+}
+
+##### Non-parametric 
+# bootstrap for regression tree
+non_para_boot = boot(data3, statistic = f1, R = 1000)
+
+# Confidence interval
+ci_non_para_boot = envelope(non_para_boot, level = 0.95)
+```
+
+```{r,echo=FALSE}
+# # regression tree step 2
+# regressor_tree = tree(data3$EX ~ data3$MET, 
+#                        data = data3,
+#                        control = tree.control(nobs = nrow(data3), minsize = 8))
+# # the best tree - step 2
+# regressor_tree_best = prune.tree(tree = regressor_tree,
+#                                   best = 3)
+# # prediction - best tree
+# regressor_tree_best_pred = predict(regressor_tree_best)
+```
+
+
+```{r, echo=FALSE}
+# Plot confidence interval - Non parametric 
+col = c("Original Data" = "blue", 
+        "Predicted data" = "red", 
+        "Confidence bands" = "green")
+plot33 = plot32 + ggtitle("Non-parametric bootstrap") +
+  geom_line(aes(x = data3$MET, 
+                y = ci_non_para_boot$point[1,],
+                color = "Confidence bands")) +
+  geom_line(aes(x = data3$MET, 
+                y = ci_non_para_boot$point[2,], 
+                color = "Confidence bands"))
+plot33
+```
+
+### 3.4 95% confidence bands - parametric bootstrap
+
+```{r, warning=FALSE}
+### 3.4 95% confidence bands - parametric bootstrap
+# regression tree step 2
+mle = regressor_tree_best
+
+rng=function(data, mle) { 
+  data1=data.frame(EX=data$EX, MET=data$MET) 
+  n=length(data$EX)
+  pred = predict(mle, newdata = data3)
+  residual = data3$EX - pred
+  #generate new Price
+  data1$EX=rnorm(n, pred, sd(residual))
+  return(data1)
+}
+
+
+# Function from lectures, replaced with tree
+f2 = function(in.data) {
+  fittedTree = tree(EX ~ MET, data = in.data, 
+                    control = tree.control(nobs =  nrow(data3), minsize = 8))
+  pruneTree = prune.tree(fittedTree, best = 3)
+  predData = predict(pruneTree, newdata = in.data)
+  return(predData)
+}
+
+
+# parametric bootstrap with prediction band
+f3 = function(data){
+  res = tree(data = data, 
+                EX~MET, 
+                control = tree.control(nobs = nrow(data3),minsize = 8))
+  res_opti = prune.tree(res, best = 3)
+  n = length(data3$EX)
+  res_opti_pred = predict(res_opti, newdata = data3)
+  predicted = rnorm(n,res_opti_pred,sd(residuals(mle)))
+  return(predicted)
+}
+```
+
+
+Confidence band
+```{r, warning=FALSE}
+##### Parametric 
+
+# Non-parametric bootstrap for regression tree
+para_boot = boot(data3, statistic = f2, R = 1000,
+                     mle = mle, ran.gen = rng, sim = "parametric")
+
+# Confidence interval
+ci_para_boot = envelope(para_boot, level = 0.95)
+```
+
+```{r, echo=FALSE}
+col = c("Original Data" = "blue", 
+        "Predicted data" = "red", 
+        "Confidence bands" = "green")
+plot34cb = plot32 + ggtitle("Parametric bootstrap") +
+  geom_line(aes(x = data3$MET, 
+                y = ci_para_boot$point[1,],
+                color = "Confidence bands")) +
+  geom_line(aes(x = data3$MET, 
+                y = ci_para_boot$point[2,], 
+                color = "Confidence bands"))
+plot34cb
+```
+
+```{r}
+set.seed(12345)
+# parametric bootstrap of best tree - with pred bands
+para_boot_pred = boot(data3, statistic=f3, R=10000, mle=mle, ran.gen=rng, sim="parametric")
+ci_para_boot_pred = envelope(para_boot_pred, level = 0.95) 
+
+```
+
+```{r,echo=FALSE}
+# create the plot of data with prediction and bootstrap
+col = c("Original Data" = "blue", "Predicted data" = "red", "Prediction Bands" = "orange", "Cofidence Bands" = "green")
+plot32 + ggtitle("Parametric bootstrap prediction bands")+
+  geom_line(aes(x = data3$MET, 
+                y = ci_para_boot_pred$point[2,], 
+                color = "Prediction Bands")) +
+  geom_line(aes(x = data3$MET, 
+                y = ci_para_boot_pred$point[1,], 
+                color = "Prediction Bands")) 
+```
+
+
+# Assignment 4
+## Principal Component
+```{r, echo=FALSE, warning=FALSE, results='hide'}
+rm(list = ls())
+```
+
+
+### 4.1 Standard PCA 
+
+```{r}
+### 4.1 Standard PCA 
+mydata = read.csv2("NIRSpectra.csv", header=TRUE,stringsAsFactors=FALSE)
+data1 = mydata
+data1$Viscosity = c()
+res = prcomp(data1)
+# eigenvalues
+lambda = res$sdev^2
+```
+
+Eigenvalues:
+```{r, echo=FALSE}
+#eigenvalues
+lambda
+```
+
+Proportion of variation 
+```{r, echo=FALSE}
+#proportion of variation 
+sprintf("%2.3f",lambda/sum(lambda)*100)[1:20]
+```
+
+Proportion of variation plot
+```{r, echo=FALSE}
+# proportion of variation plot
+screeplot(res)
+```
+
+
+
+```{r, echo=FALSE}
+# PCA plot
+plot(res$x[,1], res$x[,2],main = "PCA", ylab = "PCA2", xlab = "PCA1")
+```
+
+### 4.2 Trace plot
+
+```{r, echo=FALSE}
+### 4.2 Trace plot
+#NIR1pca = princomp(NIRSpectra, scores = TRUE, cor = TRUE)
+#Third package used.
+#loadings(NIR1pca)
+
+U = res$rotation
+plot(U[,1], main="Traceplot, PC1")
+plot(U[,2],main="Traceplot, PC2")
+```
+
+
+### 4.3 Independent Component Analysis
+
+#### a. Compute W' = K * W
+
+```{r, echo=FALSE}
+### 4.3 Independent Component Analysis
+#### a. Compute W' = K * W
+set.seed(12345)
+ica = fastICA(data1, n.comp = 2)
+
+w_prim = ica$K %*% ica$W
+plot(w_prim[,1], main="Traceplot, W1")
+plot(w_prim[,2], main="Traceplot, W2")
+```
+
+#### b. Scores of the first two latent features
+
+```{r, echo=FALSE}
+#### b. Scores of the first two latent features
+plot(ica$X[,1], ica$X[,2])
+plot(ica$S[,1], ica$S[,2], main = "Score", ylab = "Latent 2", xlab = "Latent 1")
+```
+
+
+
+# Appendix
+\newpage
+```{r ref.label=knitr::all_labels(), echo = T, eval = F}
+```
+
+
+
+
+
+
+
+
+
